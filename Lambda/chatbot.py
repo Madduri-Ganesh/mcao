@@ -9,18 +9,21 @@ def handler(event, context):
     parts = query.split()
     case_name = None  # Initialize case_name to None to avoid referenced before assignment error
     
-    for part in parts:
-        if part.startswith('tempe'):
-            suffix = part[5:]  # Extract everything after 'tempe'
-            if suffix.isdigit():
-                # If the suffix is all digits, we've found our case name
-               case_name= part
-               break
+    # for part in parts:
+    #     if part.startswith('tempe'):
+    #         suffix = part[5:]  # Extract everything after 'tempe'
+    #         if suffix.isdigit():
+    #             # If the suffix is all digits, we've found our case name
+    #            case_name= part
+    #            break
+    if parts:
+        # The last word in the query is the case name
+        case_name = parts[-1]
     
     if not case_name:
         return {
             'statusCode': 400,
-            'body': json.dumps({'message': 'No case name found in the query.'})
+            'body': json.dumps({'message': event})
         }
     
     # S3 bucket details, ensure bucket name is correctly formatted and exists
@@ -44,11 +47,11 @@ def handler(event, context):
     client = boto3.client('sagemaker-runtime')
 
     endpoint_name = os.getenv('SAGEMAKER_ENDPOINT_NAME', 'jumpstart-dft-hf-llm-mixtral-8x7b-instruct-v2')
-    combined_input = f"Answer this query '{query}' using the extracted data: {file_content}. Give me response in XML format"
+    combined_input = f"Answer this query precisely'{query}' using the extracted data: {file_content}. Give me answer in XML format"
 
     # Formatting the payload as expected
     payload = json.dumps({'inputs': combined_input,
-                          "parameters": {"max_new_tokens": 400, "do_sample": True, "temperature": 0.2}
+                          "parameters": {"max_new_tokens": 600, "do_sample": False, "temperature": 0.3}
                           })
 
     # Send the query to the SageMaker endpoint

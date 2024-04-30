@@ -13,19 +13,20 @@ def handle_with_llm_casenumber(query):
     
     # Retrieve the endpoint name from environment variables
     endpoint_name = os.environ['SAGEMAKER_ENDPOINT_NAME']
-    data = json.dumps({
-        "inputs": f"System: Your job is to provide me the case number or any unique identifier or a report number for this case which is mentioned in the provided data, answer the questions using the provided data in a single word.\n\n\nHuman:{query}\n\nAssistant:"
-    })
+    data = f"Your job is write the given data in nice detailed paragraphs. Keep the size same or more than the query size'{query}'"
+ 
     # Assuming 'data' is your input payload to the model
 
-    response = client.invoke_endpoint(
-        EndpointName=endpoint_name,
-        ContentType='application/json',  # or 'text/csv' or other depending on your model
-        Body=data
-    )
+    payload = json.dumps({'inputs': data,
+                          "parameters": {"max_new_tokens": 4000, "do_sample": False, "temperature": 0.3}
+                          })
 
-    # Parse the response payload
-    result = json.loads(response['Body'].read().decode())
+    # Send the query to the SageMaker endpoint
+    
+    response = client.invoke_endpoint(EndpointName=endpoint_name,
+                                        ContentType='application/json',
+                                        Body=payload)
+    result = json.loads(response['Body'].read().decode('utf-8'))
     
     return result
     
@@ -80,10 +81,10 @@ def save_case_number_to_dynamodb(extracted_data, document_url,bucket_name, docum
     # For example, removing curly braces, square brackets, or unwanted punctuation
     # You can add or remove characters in the translate method as needed
     clean_text = clean_text.translate(str.maketrans('', '', '{}[]()<>'))
-
+    
     # Encode the cleaned text string to bytes
     extracted_data_bytes = clean_text.encode('utf-8')
-    
+   # extracted_data_llm=handle_with_llm_casenumber(extracted_data_bytes)
    
     # Encode the cleaned text string to bytes
     
