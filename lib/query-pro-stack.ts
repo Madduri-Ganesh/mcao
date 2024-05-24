@@ -8,7 +8,12 @@ import {
   aws_s3_notifications as s3n,
   aws_dynamodb as dynamodb,
   aws_lambda_event_sources as lambdaEventSources,
+  aws_ec2 as ec2,
+  aws_elasticloadbalancingv2 as elbv2,
+  aws_ecs as ecs,
+  aws_sagemaker as sagemaker
 } from "aws-cdk-lib";
+
 import { Duration } from "aws-cdk-lib";
 import { Period } from "aws-cdk-lib/aws-apigateway";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -24,6 +29,13 @@ import * as sm from "aws-cdk-lib/aws-sagemaker";
 export class QueryProStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    // Define Sagemaker Endpoint
+    const endpoint = new sagemaker.CfnEndpoint(this, "SageMakerEndpoint", {
+      endpointConfigName: 'sagemaker-epc-1715029537755',
+      endpointName: "jumpstart-dft-hf-llm-mixtral-8x7b-instruct-v2", // Replace with your Endpoint Name
+      // Additional properties as needed
+    });
 
     // Define the Lambda function
     const myChatbot = new lambda.Function(this, "MyFunction", {
@@ -204,5 +216,100 @@ export class QueryProStack extends Stack {
     textract_complete_func.addEventSource(
       new SqsEventSource(s3_textrract_complete_queue)
     );
+
+    const vpc = ec2.Vpc.fromLookup(this, "ExistingVpc", {
+      vpcId: "vpc-0d86631672278708e", // Replace with your VPC ID
+    });
+
+    // Import existing subnets
+    const subnets = vpc.selectSubnets({
+      subnetFilters: [
+        ec2.SubnetFilter.byIds(["subnet-0bf4dab65864fe6d3", "subnet-0577d87588a7b373f"]), // Replace with your Subnet IDs
+      ],
+    });
+
+    // Import existing security group
+    const securityGroup = ec2.SecurityGroup.fromSecurityGroupId(this, "ExistingSecurityGroup", "sg-01602a563435263e3"); // Replace with your Security Group ID
+
+    // Import existing load balancer
+    const loadBalancer = elbv2.ApplicationLoadBalancer.fromApplicationLoadBalancerAttributes(this, "ExistingLoadBalancer", {
+      loadBalancerArn: "arn:aws:elasticloadbalancing:us-east-1:500608964291:loadbalancer/app/mcao-lb/e530a024f9ea0085", // Replace with your Load Balancer ARN
+      securityGroupId: securityGroup.securityGroupId,
+    });
+
+
+    const cluster = new ecs.Cluster(this, "EcsCluster", {
+      vpc,
+      clusterName: "ganesh_3_cluster",
+    });
+
+    const taskRole = new iam.Role(this, "TaskRole", {
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonEC2ContainerServiceforEC2Role"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonEC2ContainerServiceRole"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonECS_FullAccess"),
+      ],
+    });
+
+    const executionRole = new iam.Role(this, "ExecutionRole", {
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName("EC2InstanceProfileForImageBuilderECRContainerBuilds"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonBedrockFullAccess"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonS3FullAccess"),
+      ],
+    });
+
+    const taskDefinition = new ecs.FargateTaskDefinition(this, "TaskDef", {
+      memoryLimitMiB: 3072,
+      cpu: 1024,
+      taskRole,
+      executionRole
+    });
+
+    const container = taskDefinition.addContainer("mcao-streamlit", {
+      image: ecs.ContainerImage.fromRegistry("public.ecr.aws/h9e1x4p1/mcao-streamlit:latest"),
+      memoryLimitMiB: 3072,
+      cpu: 1024,
+      logging: ecs.LogDriver.awsLogs({ streamPrefix: "mcao" }),
+    });
+
+    container.addPortMappings({
+      containerPort: 8501,
+    });
+
+    const targetGroup = elbv2.ApplicationTargetGroup.fromTargetGroupAttributes(this, 'ImportedTargetGroup', {
+      targetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:500608964291:targetgroup/ecs-ganesh-mcao-service/728fdd3a220912ed",
+    });
+
+    // Import existing listener
+    const listener = elbv2.ApplicationListener.fromApplicationListenerAttributes(this, "ExistingListener", {
+      listenerArn: "arn:aws:elasticloadbalancing:region:account-id:listener/app/load-balancer-name/50dc6c495c0c9188/6f72db3c709f0c8f", // Replace with your Listener ARN
+      securityGroup: securityGroup,
+    });
+
+    const fargateService = new ecs.FargateService(this, "ECSService", {
+      cluster,
+      taskDefinition,
+      desiredCount: 1,
+      serviceName: "mcao-service",
+      securityGroups: [securityGroup],
+      assignPublicIp: true,
+      vpcSubnets: { subnets: subnets.subnets },
+      healthCheckGracePeriod: cdk.Duration.seconds(60)
+    });
+    fargateService.attachToApplicationTargetGroup(targetGroup);
+
+    new cdk.CfnOutput(this, "LoadBalancerDNS", {
+      value: `http://mcao-lb-1093413639.us-east-1.elb.amazonaws.com:8501`,
+      description: "DNS name of the load balancer",
+    });
+
+    // Output the name of the S3 bucket
+    new cdk.CfnOutput(this, 'BucketName', {
+      value: 'queryprostack-mybucketf68f3ff0-piigxfelaa5j',
+    });
   }
 }
