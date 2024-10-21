@@ -1,0 +1,9 @@
+streamlit
+boto3
+# json
+lxml
+# html
+streamlit_pdf_viewer
+streamlit_float
+streamlit_js_eval
+botocore
